@@ -15,53 +15,55 @@ from utils.rotate_vertices import frontalize
 from utils.render_app import get_visibility, get_uv_mask, get_depth_image
 from utils.write import write_obj_with_colors, write_obj_with_texture
 
+
 def main(args):
     if args.isShow or args.isTexture:
         import cv2
         from utils.cv_plot import plot_kpt, plot_vertices, plot_pose_box
 
     # ---- init PRN
-    os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu # GPU number, -1 for CPU
-    prn = PRN(is_dlib = args.isDlib)
+    os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu  # GPU number, -1 for CPU
+    prn = PRN(is_dlib=args.isDlib)
 
     # ------------- load data
     image_folder = args.inputDir
     save_folder = args.outputDir
+    print("save_folder:", save_folder)
     if not os.path.exists(save_folder):
         os.mkdir(save_folder)
 
     types = ('*.jpg', '*.png')
-    image_path_list= []
+    image_path_list = []
     for files in types:
         image_path_list.extend(glob(os.path.join(image_folder, files)))
     total_num = len(image_path_list)
 
     for i, image_path in enumerate(image_path_list):
 
-        name = image_path.strip().split('/')[-1][:-4]
+        name = image_path.strip().split(os.sep)[-1][:-4]
 
         # read image
         image = imread(image_path)
         [h, w, c] = image.shape
-        if c>3:
-            image = image[:,:,:3]
+        if c > 3:
+            image = image[:, :, :3]
 
         # the core: regress position map
         if args.isDlib:
             max_size = max(image.shape[0], image.shape[1])
-            if max_size> 1000:
-                image = rescale(image, 1000./max_size)
-                image = (image*255).astype(np.uint8)
-            pos = prn.process(image) # use dlib to detect face
+            if max_size > 1000:
+                image = rescale(image, 1000. / max_size)
+                image = (image * 255).astype(np.uint8)
+            pos = prn.process(image)  # use dlib to detect face
         else:
             if image.shape[0] == image.shape[1]:
-                image = resize(image, (256,256))
-                pos = prn.net_forward(image/255.) # input image has been cropped to 256x256
+                image = resize(image, (256, 256))
+                pos = prn.net_forward(image / 255.)  # input image has been cropped to 256x256
             else:
-                box = np.array([0, image.shape[1]-1, 0, image.shape[0]-1]) # cropped with bounding box
+                box = np.array([0, image.shape[1] - 1, 0, image.shape[0] - 1])  # cropped with bounding box
                 pos = prn.process(image, box)
-        
-        image = image/255.
+
+        image = image / 255.
         if pos is None:
             continue
 
@@ -72,10 +74,10 @@ def main(args):
                 save_vertices = frontalize(vertices)
             else:
                 save_vertices = vertices.copy()
-            save_vertices[:,1] = h - 1 - save_vertices[:,1]
+            save_vertices[:, 1] = h - 1 - save_vertices[:, 1]
 
         if args.isImage:
-            imsave(os.path.join(save_folder, name + '.jpg'), image)
+            imsave(os.path.join(save_folder, name + ".jpg"), image)
 
         if args.is3d:
             # corresponding colors
@@ -83,27 +85,31 @@ def main(args):
 
             if args.isTexture:
                 if args.texture_size != 256:
-                    pos_interpolated = resize(pos, (args.texture_size, args.texture_size), preserve_range = True)
+                    pos_interpolated = resize(pos, (args.texture_size, args.texture_size), preserve_range=True)
                 else:
                     pos_interpolated = pos.copy()
-                texture = cv2.remap(image, pos_interpolated[:,:,:2].astype(np.float32), None, interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT,borderValue=(0))
+                texture = cv2.remap(image, pos_interpolated[:, :, :2].astype(np.float32), None,
+                                    interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=(0))
                 if args.isMask:
                     vertices_vis = get_visibility(vertices, prn.triangles, h, w)
                     uv_mask = get_uv_mask(vertices_vis, prn.triangles, prn.uv_coords, h, w, prn.resolution_op)
-                    uv_mask = resize(uv_mask, (args.texture_size, args.texture_size), preserve_range = True)
-                    texture = texture*uv_mask[:,:,np.newaxis]
-                write_obj_with_texture(os.path.join(save_folder, name + '.obj'), save_vertices, prn.triangles, texture, prn.uv_coords/prn.resolution_op)#save 3d face with texture(can open with meshlab)
+                    uv_mask = resize(uv_mask, (args.texture_size, args.texture_size), preserve_range=True)
+                    texture = texture * uv_mask[:, :, np.newaxis]
+                write_obj_with_texture(os.path.join(save_folder, name + '.obj'), save_vertices, prn.triangles, texture,
+                                       prn.uv_coords / prn.resolution_op)  # save 3d face with texture(can open with meshlab)
             else:
-                write_obj_with_colors(os.path.join(save_folder, name + '.obj'), save_vertices, prn.triangles, colors) #save 3d face(can open with meshlab)
+                write_obj_with_colors(os.path.join(save_folder, name + '.obj'), save_vertices, prn.triangles,
+                                      colors)  # save 3d face(can open with meshlab)
 
         if args.isDepth:
             depth_image = get_depth_image(vertices, prn.triangles, h, w, True)
             depth = get_depth_image(vertices, prn.triangles, h, w)
             imsave(os.path.join(save_folder, name + '_depth.jpg'), depth_image)
-            sio.savemat(os.path.join(save_folder, name + '_depth.mat'), {'depth':depth})
+            sio.savemat(os.path.join(save_folder, name + '_depth.mat'), {'depth': depth})
 
         if args.isMat:
-            sio.savemat(os.path.join(save_folder, name + '_mesh.mat'), {'vertices': vertices, 'colors': colors, 'triangles': prn.triangles})
+            sio.savemat(os.path.join(save_folder, name + '_mesh.mat'),
+                        {'vertices': vertices, 'colors': colors, 'triangles': prn.triangles})
 
         if args.isKpt or args.isShow:
             # get landmarks
@@ -113,8 +119,8 @@ def main(args):
         if args.isPose or args.isShow:
             # estimate pose
             camera_matrix, pose = estimate_pose(vertices)
-            np.savetxt(os.path.join(save_folder, name + '_pose.txt'), pose) 
-            np.savetxt(os.path.join(save_folder, name + '_camera_matrix.txt'), camera_matrix) 
+            np.savetxt(os.path.join(save_folder, name + '_pose.txt'), pose)
+            np.savetxt(os.path.join(save_folder, name + '_camera_matrix.txt'), camera_matrix)
 
             np.savetxt(os.path.join(save_folder, name + '_pose.txt'), pose)
 
@@ -128,7 +134,8 @@ def main(args):
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Joint 3D Face Reconstruction and Dense Alignment with Position Map Regression Network')
+    parser = argparse.ArgumentParser(
+        description='Joint 3D Face Reconstruction and Dense Alignment with Position Map Regression Network')
 
     parser.add_argument('-i', '--inputDir', default='TestImages/', type=str,
                         help='path to the input directory, where input images are stored.')
@@ -146,9 +153,9 @@ if __name__ == '__main__':
                         help='whether to output key points(.txt)')
     parser.add_argument('--isPose', default=False, type=ast.literal_eval,
                         help='whether to output estimated pose(.txt)')
-    parser.add_argument('--isShow', default=False, type=ast.literal_eval,
+    parser.add_argument('--isShow', default=True, type=ast.literal_eval,
                         help='whether to show the results with opencv(need opencv)')
-    parser.add_argument('--isImage', default=False, type=ast.literal_eval,
+    parser.add_argument('--isImage', default=True, type=ast.literal_eval,
                         help='whether to save input image')
     # update in 2017/4/10
     parser.add_argument('--isFront', default=False, type=ast.literal_eval,
